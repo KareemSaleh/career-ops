@@ -341,6 +341,19 @@ function extractBlockerType(gap) {
   return 'other';
 }
 
+// Infer a canonical archetype from a role title (fallback when no report exists)
+function inferArchetype(role) {
+  if (!role) return null;
+  const r = role.toLowerCase();
+  if (/\b(cto|chief technology|head of engineering)\b/.test(r)) return 'CTO / Head of Engineering';
+  if (/(product manage|of product|director.*product|product.*director|head of product)/.test(r)) return 'VP/Director of Product';
+  if (/\b(applied ai|ai engineering|ml platform|llmops|machine learning|head of ml)\b/.test(r)) return 'AI Platform / LLMOps';
+  if (/\b(senior director|sr\.? director|svp|avp|vp|vice president)\b/.test(r)) return 'VP Engineering';
+  if (/\b(director|technical director)\b/.test(r)) return 'Director of Engineering';
+  if (/\b(engineering manager|group engineering manager|software engineering manager|em)\b/.test(r)) return 'Senior Manager of Engineering';
+  return null;
+}
+
 // --- Main analysis ---
 function analyze() {
   const entries = parseTracker();
@@ -370,6 +383,7 @@ function analyze() {
       outcome,
       score,
       report: reportData,
+      archetype: reportData?.archetype || inferArchetype(e.role),
       remoteBucket: classifyRemote(remoteSource),
       companySize: classifyCompanySize(teamSource),
     };
@@ -419,7 +433,7 @@ function analyze() {
   // --- Archetype breakdown ---
   const archetypeMap = new Map();
   for (const e of enriched) {
-    const arch = e.report?.archetype || 'Unknown';
+    const arch = e.archetype || 'Unknown';
     if (!archetypeMap.has(arch)) archetypeMap.set(arch, { total: 0, positive: 0, negative: 0, self_filtered: 0, pending: 0 });
     const entry = archetypeMap.get(arch);
     entry.total++;
