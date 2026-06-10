@@ -63,6 +63,7 @@
  * @property {('http')} transport
  * @property {(url: string, opts?: FetchOptions) => Promise<string>}  fetchText
  * @property {(url: string, opts?: FetchOptions) => Promise<unknown>} fetchJson
+ * @property {(url: string, body: unknown, opts?: FetchOptions) => Promise<unknown>} post
  */
 
 /**

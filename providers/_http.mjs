@@ -39,10 +39,21 @@ export async function fetchText(url, opts = {}) {
   return await res.text();
 }
 
+export async function postJson(url, body, opts = {}) {
+  const res = await fetchWithTimeout(url, {
+    ...opts,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
+    body: JSON.stringify(body),
+  });
+  return await res.json();
+}
+
 export function makeHttpCtx() {
   return {
     transport: 'http',
     fetchJson,
     fetchText,
+    post: postJson,
   };
 }
