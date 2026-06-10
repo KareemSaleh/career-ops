@@ -225,14 +225,18 @@ function parseReport(reportPath) {
   const plain = content.replace(/\*\*/g, '');
 
   // Extract Block A table (Role Summary) — works with both EN and ES headers
-  const blockARegex = /\|\s*(?:Archetype|Arquetipo)\s*\|\s*(.*?)\s*\|/i;
+  // Archetype cell may be labeled "Archetype", "Arquetipo", or "Detected archetype" (drift from EN translation).
+  const blockARegex = /\|\s*(?:Detected\s+)?(?:Archetype|Arquetipo)\s*\|\s*(.*?)\s*\|/i;
   const seniorityRegex = /\|\s*(?:Seniority|Nivel|Level)\s*\|\s*(.*?)\s*\|/i;
   const remoteRegex = /\|\s*(?:Remote|Remoto|Location)\s*\|\s*(.*?)\s*\|/i;
   const teamRegex = /\|\s*(?:Team|Team size|Equipo)\s*\|\s*(.*?)\s*\|/i;
   const compRegex = /\|\s*(?:Comp|Salary|Salario|Listed salary)\s*\|\s*(.*?)\s*\|/i;
   const domainRegex = /\|\s*(?:Domain|Dominio|Industry)\s*\|\s*(.*?)\s*\|/i;
 
-  const archMatch = plain.match(blockARegex);
+  // Fallback: report header field `Archetype: ...` or `Arquetipo: ...` (newer reports use this).
+  const headerArchRegex = /^(?:Archetype|Arquetipo):\s*(.+?)$/im;
+
+  const archMatch = plain.match(blockARegex) || plain.match(headerArchRegex);
   if (archMatch && !report.archetype) report.archetype = archMatch[1].trim();
 
   const senMatch = plain.match(seniorityRegex);
@@ -341,19 +345,6 @@ function extractBlockerType(gap) {
   return 'other';
 }
 
-// Infer a canonical archetype from a role title (fallback when no report exists)
-function inferArchetype(role) {
-  if (!role) return null;
-  const r = role.toLowerCase();
-  if (/\b(cto|chief technology|head of engineering)\b/.test(r)) return 'CTO / Head of Engineering';
-  if (/(product manage|of product|director.*product|product.*director|head of product)/.test(r)) return 'VP/Director of Product';
-  if (/\b(applied ai|ai engineering|ml platform|llmops|machine learning|head of ml)\b/.test(r)) return 'AI Platform / LLMOps';
-  if (/\b(senior director|sr\.? director|svp|avp|vp|vice president)\b/.test(r)) return 'VP Engineering';
-  if (/\b(director|technical director)\b/.test(r)) return 'Director of Engineering';
-  if (/\b(engineering manager|group engineering manager|software engineering manager|em)\b/.test(r)) return 'Senior Manager of Engineering';
-  return null;
-}
-
 // --- Main analysis ---
 function analyze() {
   const entries = parseTracker();
@@ -383,7 +374,6 @@ function analyze() {
       outcome,
       score,
       report: reportData,
-      archetype: reportData?.archetype || inferArchetype(e.role),
       remoteBucket: classifyRemote(remoteSource),
       companySize: classifyCompanySize(teamSource),
     };
@@ -433,7 +423,7 @@ function analyze() {
   // --- Archetype breakdown ---
   const archetypeMap = new Map();
   for (const e of enriched) {
-    const arch = e.archetype || 'Unknown';
+    const arch = e.report?.archetype || 'Unknown';
     if (!archetypeMap.has(arch)) archetypeMap.set(arch, { total: 0, positive: 0, negative: 0, self_filtered: 0, pending: 0 });
     const entry = archetypeMap.get(arch);
     entry.total++;

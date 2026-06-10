@@ -1,51 +1,48 @@
-/**
- * _http.mjs — Shared HTTP helper for provider plugins.
- * Files prefixed with _ are never loaded as providers by scan.mjs.
- *
- * makeHttpCtx() returns { get(url, opts?), post(url, body, opts?) }.
- * Both methods return parsed JSON and throw on non-2xx responses.
- * Requires Node.js 18+ (global fetch).
- */
+// HTTP transport helpers shared across providers.
+// Files prefixed with _ are never loaded as providers by scan.mjs.
 
-const DEFAULT_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; career-ops-scanner/1.0; +https://github.com/santifer/career-ops)',
-  'Accept': 'application/json',
-};
+const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; career-ops/1.3)';
 
-const DEFAULT_TIMEOUT_MS = 20_000;
+async function fetchWithTimeout(url, { timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, method = 'GET', body = null, redirect = 'follow' } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'user-agent': DEFAULT_USER_AGENT, ...headers },
+      body,
+      redirect,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const responseText = await res.text().catch(() => '');
+      const snippet = responseText.replace(/\s+/g, ' ').trim().slice(0, 300);
+      const err = new Error(snippet ? `HTTP ${res.status}: ${snippet}` : `HTTP ${res.status}`);
+      err.status = res.status;
+      err.body = responseText;
+      throw err;
+    }
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function fetchJson(url, opts = {}) {
+  const res = await fetchWithTimeout(url, opts);
+  return await res.json();
+}
+
+export async function fetchText(url, opts = {}) {
+  const res = await fetchWithTimeout(url, opts);
+  return await res.text();
+}
 
 export function makeHttpCtx() {
-  async function request(url, options = {}) {
-    const { headers = {}, timeout = DEFAULT_TIMEOUT_MS, ...rest } = options;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    try {
-      const res = await fetch(url, {
-        ...rest,
-        headers: { ...DEFAULT_HEADERS, ...headers },
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText} — ${url}`);
-      }
-      return res.json();
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   return {
-    get(url, options = {}) {
-      return request(url, { method: 'GET', ...options });
-    },
-
-    post(url, body, options = {}) {
-      return request(url, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options,
-      });
-    },
+    transport: 'http',
+    fetchJson,
+    fetchText,
   };
 }
