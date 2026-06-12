@@ -1,105 +1,81 @@
-/**
- * workday.mjs — Workday ATS provider for career-ops scanner.
- *
- * Detects from a Workday-hosted URL in entry.api or entry.careers_url:
- *   https://{tenant}.{shard}.myworkdayjobs.com/{site}
- *   https://{tenant}.{shard}.myworkdayjobs.com/en-US/{site}
- *   https://{tenant}.{shard}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs
- *
- * Companies whose corporate careers_url is NOT a myworkdayjobs.com URL
- * (e.g. CrowdStrike at crowdstrike.com/careers) should set `provider: workday`
- * plus an `api:` field pointing at their Workday board, or a `workday:` override:
- *
- *   - name: CrowdStrike
- *     provider: workday
- *     api: https://crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers
- *   # or explicit:
- *   - name: CrowdStrike
- *     provider: workday
- *     workday: { host: crowdstrike.wd5.myworkdayjobs.com, tenant: crowdstrike, site: crowdstrikecareers }
- *
- * API: POST https://{host}/wday/cxs/{tenant}/{site}/jobs
- *      body { appliedFacets:{}, limit, offset, searchText:"" } — paginate by offset.
- * Response: { total, jobPostings: [{ title, externalPath, locationsText }] }
- * Public job URL: https://{host}/{site}{externalPath}
- */
+// @ts-check
+/** @typedef {import('./_types.js').Provider} Provider */
 
-const HOST_RE = /([a-z0-9-]+)\.([a-z0-9-]+)\.myworkdayjobs\.com/i;
-const CXS_RE = /\/wday\/cxs\/([^/]+)\/([^/]+)\/jobs/i;
-// Locale segments like en-US, en-GB, fr-CA — skipped when reading the site path.
-const LOCALE_RE = /^[a-z]{2}-[A-Za-z]{2,}$/;
+// Workday provider — hits the public CXS jobs endpoint (POST, paginated).
+// Auto-detects from careers_url pattern
+// `https://<tenant>.<instance>.myworkdayjobs.com[/<locale>]/<site>`,
+// e.g. https://23andme.wd5.myworkdayjobs.com/23 →
+//      POST https://23andme.wd5.myworkdayjobs.com/wday/cxs/23andme/23/jobs
+//
+// Workday only exposes a relative "postedOn" label ("Posted Today",
+// "Posted 5 Days Ago", "Posted 30+ Days Ago"); postedAt is derived from it
+// and omitted for the unbounded "30+ Days Ago" form.
 
 const PAGE_SIZE = 20;
-const MAX_PAGES = 50; // safety cap (1000 postings)
+const MAX_PAGES = 50; // safety cap — at most 1000 postings per site
 
-// Resolve { host, tenant, site } from an explicit override or a Workday URL.
-function resolve(entry) {
-  const o = entry.workday;
-  if (o && o.host && o.tenant && o.site) {
-    return { host: o.host, tenant: o.tenant, site: o.site };
-  }
-
-  const url = entry.api || entry.careers_url || '';
-  const hostMatch = url.match(HOST_RE);
-  if (!hostMatch) return null;
-  const host = hostMatch[0];
-  const tenantFromHost = hostMatch[1];
-
-  // Explicit cxs URL carries tenant + site directly.
-  const cxs = url.match(CXS_RE);
-  if (cxs) return { host, tenant: cxs[1], site: cxs[2] };
-
-  // Otherwise derive site from the path: first non-locale segment after host.
-  const path = url.slice(url.indexOf(host) + host.length).split(/[?#]/)[0];
-  const segs = path.split('/').filter(Boolean).filter(s => !LOCALE_RE.test(s));
-  const site = segs[0];
-  if (!site) return null;
-
-  const tenant = (o && o.tenant) || tenantFromHost;
-  return { host, tenant, site };
+function resolveEndpoint(entry) {
+  const url = entry.careers_url || '';
+  const m = url.match(/^https:\/\/([\w-]+)\.(wd[\w-]*)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)/);
+  if (!m) return null;
+  const [, tenant, instance, site] = m;
+  const origin = `https://${tenant}.${instance}.myworkdayjobs.com`;
+  return {
+    api: `${origin}/wday/cxs/${tenant}/${site}/jobs`,
+    // externalPath is relative to the site, not the host root — without the
+    // site segment the URL 404s.
+    jobBase: `${origin}/${site}`,
+  };
 }
 
+function parsePostedOn(label) {
+  if (!label) return undefined;
+  if (/posted\s+today/i.test(label)) return Date.now();
+  if (/posted\s+yesterday/i.test(label)) return Date.now() - 86_400_000;
+  const m = label.match(/posted\s+(\d+)(\+?)\s*day/i);
+  if (!m || m[2] === '+') return undefined; // "30+ Days Ago" — unbounded, no usable date
+  return Date.now() - Number(m[1]) * 86_400_000;
+}
+
+/** @type {Provider} */
 export default {
   id: 'workday',
 
   detect(entry) {
-    return resolve(entry) ? {} : null;
+    const ep = resolveEndpoint(entry);
+    return ep ? { url: ep.api } : null;
   },
 
   async fetch(entry, ctx) {
-    const r = resolve(entry);
-    if (!r) throw new Error(`workday: cannot determine board for "${entry.name}"`);
-    const { host, tenant, site } = r;
+    const ep = resolveEndpoint(entry);
+    if (!ep) throw new Error(`workday: cannot derive CXS endpoint for ${entry.name}`);
 
-    const apiUrl = `https://${host}/wday/cxs/${tenant}/${site}/jobs`;
-    const out = [];
-
+    const jobs = [];
     for (let page = 0; page < MAX_PAGES; page++) {
-      const offset = page * PAGE_SIZE;
-      const data = await ctx.post(apiUrl, {
-        appliedFacets: {},
+      const body = JSON.stringify({
         limit: PAGE_SIZE,
-        offset,
+        offset: page * PAGE_SIZE,
         searchText: '',
+        appliedFacets: {},
       });
-
-      const postings = Array.isArray(data?.jobPostings) ? data.jobPostings : [];
-      if (postings.length === 0) break;
-
-      for (const p of postings) {
-        const ext = p.externalPath || '';
-        out.push({
-          title: p.title || '',
-          url: ext ? `https://${host}/${site}${ext}` : '',
+      const json = await ctx.fetchJson(ep.api, {
+        method: 'POST',
+        body,
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+      });
+      const postings = Array.isArray(json?.jobPostings) ? json.jobPostings : [];
+      for (const j of postings) {
+        if (!j.externalPath) continue;
+        jobs.push({
+          title: j.title || '',
+          url: ep.jobBase + j.externalPath,
           company: entry.name,
-          location: p.locationsText || '',
+          location: j.locationsText || '',
+          postedAt: parsePostedOn(j.postedOn),
         });
       }
-
-      const total = Number(data?.total) || 0;
-      if (offset + PAGE_SIZE >= total) break;
+      if (postings.length < PAGE_SIZE) break;
     }
-
-    return out.filter(j => j.title && j.url);
+    return jobs;
   },
 };
