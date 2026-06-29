@@ -8,7 +8,7 @@ Fortunately, **Career-Ops is completely AI-agnostic.** The pipeline relies on th
 
 ## 1. The Core Concept: Model Agnosticism
 
-Career-Ops is composed of local templates, Markdown prompts, and Node/Playwright scripts. The AI logic is driven entirely by whichever AI coding CLI you run it in (e.g., Claude Code, OpenCode, Qwen CLI, Codex, or Antigravity CLI).
+Career-Ops is composed of local templates, Markdown prompts, and Node/Playwright scripts. The AI logic is driven entirely by whichever AI coding CLI you run it in (e.g., Claude Code, OpenCode, Qwen CLI, Codex, Antigravity CLI, or Grok Build CLI).
 
 By choosing a CLI that supports custom model configurations and routing it to a cheaper API provider or local LLM, you can drastically reduce your pipeline running costs without losing any functionality.
 
@@ -72,6 +72,15 @@ When choosing a budget-friendly model, you need strong reasoning capabilities to
 | **Qwen-2.5-Coder (32B / 72B)** | OpenRouter / DeepInfra | ~$0.07 - ~$0.30 | Strong coding and structured reasoning, highly cost-effective. |
 | **GLM-4-Air / GLM-4** | Zhipu AI / OpenRouter | Very Cheap | Reliable multi-turn reasoning and JSON/Markdown generation. |
 | **Gemini 2.5 Flash** | Google AI Studio | Free Tier (15 RPM) | Available via the standalone script `node gemini-eval.mjs`. Excellent for zero-cost low-volume runs, but subject to rate limits. |
+
+> **Standalone evaluator (no CLI config needed):** every OpenAI-compatible provider above (DeepSeek, Qwen, GLM, Together, Groq, OpenRouter, …) works directly through `node openai-eval.mjs` — just set a base URL, model, and key:
+> ```bash
+> OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+> OPENAI_MODEL=deepseek/deepseek-chat \
+> OPENAI_API_KEY=your_key \
+> node openai-eval.mjs --file ./jds/job.txt
+> ```
+> Run `node openai-eval.mjs --help` for per-provider examples. For 100% local/private use, point `--url` at a local server (LM Studio / llama.cpp / vLLM) or use `node ollama-eval.mjs`.
 
 ---
 
