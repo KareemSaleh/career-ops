@@ -37,6 +37,7 @@ import yaml from 'js-yaml';
 
 import { makeHttpCtx } from './providers/_http.mjs';
 import { buildTrustValidator } from './providers/_trust-validator.mjs';
+import { mergeProviderPlugins } from './plugins/_engine.mjs';
 
 const parseYaml = yaml.load;
 
@@ -607,16 +608,36 @@ export function sanitizeTsvField(value) {
   return /^[=+\-@]/.test(normalized) ? `'${normalized}` : normalized;
 }
 
+// Format an offer's parsed compensation (the annualized {min,max,currency} that
+// providers like Ashby attach as `offer.salary`) into a compact, sanitized cell
+// such as `120000-160000 USD`. Returns '' when there is no usable salary data.
+// Non-positive bounds are dropped (a 0 min/max is meaningless comp data, not "$0").
+export function formatCompensation(salary) {
+  if (!salary || typeof salary !== 'object') return '';
+  const num = (n) => (Number.isFinite(n) && n > 0 ? String(Math.round(n)) : null);
+  const lo = num(salary.min);
+  const hi = num(salary.max);
+  const range = lo && hi && lo !== hi ? `${lo}-${hi}` : (lo || hi || '');
+  if (!range) return '';
+  const currency = typeof salary.currency === 'string' ? salary.currency.trim() : '';
+  return sanitizeMarkdownField(currency ? `${range} ${currency}` : range);
+}
+
 export function formatPipelineOffer(offer) {
   const url = sanitizePipelineUrl(offer.url);
   const company = sanitizeMarkdownField(offer.company);
   const title = sanitizeMarkdownField(offer.title);
-  // Location is appended as an optional 4th pipe-delimited column when the ATS
-  // exposes it (sanitized like every other field). Offers without a location
-  // keep the original 3-column form, which downstream readers treat as empty;
+  // Optional trailing columns, each sanitized like every other field:
+  //   4th = location, 5th = compensation.
+  // Gate location on an actual string so malformed provider data (a number or
+  // object) degrades to the 3-column form instead of stringifying into a
+  // spurious column. The columns are positional, so a present compensation
+  // forces the (possibly empty) location cell to keep comp in column 5.
   // loadSeenUrls dedups on the URL and ignores trailing columns (backward-compatible).
-  const location = sanitizeMarkdownField(offer.location);
+  const location = typeof offer.location === 'string' ? sanitizeMarkdownField(offer.location) : '';
+  const compensation = formatCompensation(offer.salary);
   const base = `- [ ] ${url} | ${company} | ${title}`;
+  if (compensation) return `${base} | ${location} | ${compensation}`;
   return location ? `${base} | ${location}` : base;
 }
 
@@ -860,6 +881,10 @@ async function main() {
 
   // 1. Load providers
   const providers = await loadProviders(PROVIDERS_DIR);
+  // Opt-in: merge enabled keyed/auth-gated provider plugins. Returns immediately
+  // (no discovery, no dotenv, no process.env mutation) when config/plugins.yml is
+  // absent — so a plain scan with no plugins configured stays byte-identical.
+  await mergeProviderPlugins(providers, { root: path.dirname(PROVIDERS_DIR) });
   if (providers.size === 0) {
     console.error('Error: no providers loaded from providers/');
     process.exit(1);
