@@ -6,6 +6,7 @@ data/applications.md.bak
 data/pipeline.md
 data/scan-history.tsv
 data/follow-ups.md
+data/pdf-index.tsv
 reports/*.md
 !reports/.gitkeep
 output/*
