@@ -38,6 +38,22 @@ export const ROLE_STOPWORDS = new Set([
   'with', 'from', 'into', 'over', 'this', 'that',
 ]);
 
+// Region/country words that also live in ROLE_STOPWORDS (they're common
+// filler when titles otherwise repeat a generic role). Kept as a separate
+// set so the geo-conflict guard below can single them out: two titles that
+// each name a DIFFERENT region are two separately-postable openings (#1912
+// — "Engineering Manager - Americas" vs "Engineering Manager, Canada" were
+// silently collapsed onto one tracker row because the stopword strip made
+// both titles reduce to the same generic tokens).
+export const GEO_TOKENS = new Set([
+  'bangalore', 'bengaluru', 'mumbai', 'delhi', 'hyderabad', 'pune', 'chennai',
+  'london', 'berlin', 'paris', 'madrid', 'barcelona', 'amsterdam', 'dublin',
+  'york', 'francisco', 'seattle', 'boston', 'austin', 'chicago', 'toronto',
+  'tokyo', 'singapore', 'sydney', 'melbourne', 'lisbon', 'warsaw',
+  'europe', 'emea', 'apac', 'latam', 'americas', 'india', 'spain', 'germany',
+  'france', 'italy', 'canada', 'brazil', 'mexico', 'japan',
+]);
+
 // Short specialty acronyms that are discriminating despite their length.
 // Broad two-letter buckets such as AI/ML are intentionally excluded because
 // they appear across many unrelated roles.
@@ -50,7 +66,7 @@ export const SHORT_SPECIALTY = new Set([
 // Generic role-level descriptors. Two titles whose only overlap is in this set
 // are not the same opening; they are merely written at the same role altitude.
 export const BASELINE_TOKENS = new Set([
-  'software', 'engineer', 'developer', 'manager', 'architect',
+  'software', 'engineer', 'engineering', 'developer', 'manager', 'architect',
   'analyst', 'designer', 'consultant', 'specialist',
   'platform', 'systems', 'services',
   'backend', 'frontend', 'full', 'stack', 'fullstack',
@@ -87,6 +103,17 @@ function extractSeniorities(title) {
   );
 }
 
+function extractGeoTokens(title) {
+  const text = typeof title === 'string' ? title : String(title ?? '');
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => GEO_TOKENS.has(w))
+  );
+}
+
 /**
  * Decide whether two role titles are likely the same opening.
  *
@@ -111,6 +138,17 @@ export function roleFuzzyMatch(a, b) {
   if (senA.size > 0 && senB.size > 0) {
     const hasOverlap = [...senA].some(s => senB.has(s));
     if (!hasOverlap) return false;
+  }
+
+  // If both titles explicitly name a region/country, they MUST share one.
+  // e.g. "Engineering Manager - Americas" vs "Engineering Manager, Canada"
+  // -> no overlap, different postings even though both reduce to
+  // [engineering, manager] once the geo word is stripped as a stopword below.
+  const geoA = extractGeoTokens(a);
+  const geoB = extractGeoTokens(b);
+  if (geoA.size > 0 && geoB.size > 0) {
+    const hasGeoOverlap = [...geoA].some(g => geoB.has(g));
+    if (!hasGeoOverlap) return false;
   }
 
   const wordsA = [...new Set(roleTokens(a))];
